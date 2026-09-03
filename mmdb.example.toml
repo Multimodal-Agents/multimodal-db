@@ -1,0 +1,41 @@
+# Copy to mmdb.toml (gitignored: it can carry tokens). Every path here is relative to
+# this file. Pick endpoints per call with --embed / --llm, per shell with MMDB_EMBED /
+# MMDB_LLM, or once here under [defaults].
+
+[store]
+root = "data"        # collections/, blobs and the embedded Qdrant live under here
+chunk_size = 512     # tokens per chunk when a collection is created
+chunk_overlap = 64
+
+[defaults]
+embed = "local"
+llm = "studio"
+
+# kind = "openai": anything that speaks the OpenAI HTTP API. Unsloth Studio, a bare
+# llama-server, vLLM, LM Studio. "auto" for a model name asks GET /models and takes the
+# first entry. Studio note: /v1/embeddings only answers while a GGUF model is loaded, so
+# load an embedding GGUF there (or run `llama-server --embedding` yourself) before
+# pointing embed_model at it. Auth is a Bearer token, or none if keyless inference is on.
+[endpoints.studio]
+kind = "openai"
+base_url = "http://127.0.0.1:8889/v1"
+api_key_env = "UNSLOTH_STUDIO_TOKEN"
+chat_model = "auto"
+embed_model = "auto"
+
+# kind = "huggingface": embeds in this process, no server, needs the [local] extra.
+# The same model Studio uses for its own RAG. Embeddings only; no chat_model.
+[endpoints.local]
+kind = "huggingface"
+embed_model = "unsloth/bge-small-en-v1.5"
+
+# kind = "ollama": needs the [ollama] extra.
+# [endpoints.ollama]
+# kind = "ollama"
+# base_url = "http://127.0.0.1:11434"
+# chat_model = "qwen2.5-coder:3b"
+# embed_model = "nomic-embed-text"
+
+# kind = "fake": deterministic stand-ins for tests and dry runs. No model, no network.
+[endpoints.fake]
+kind = "fake"
