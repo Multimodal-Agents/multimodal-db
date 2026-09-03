@@ -1,191 +1,161 @@
-# 💾 Multimodal-DB 💾
+# multimodal-db
 
-> High-performance multimodal database system for AI agent ecosystems
+A small document store for brains. You point it at what a crawler fetched (ROCm docs,
+arXiv PDFs, release notes, transcripts, images with captions) and it keeps the bytes, a
+Polars index of where each thing came from, and embedded chunks you can search. Models
+come from wherever you already run them: Unsloth Studio, a bare `llama-server`, vLLM,
+LM Studio, Ollama, or in-process.
 
-A comprehensive data management layer for AI agents with multi-database support, vector search capabilities, and RAG (Retrieval-Augmented Generation) integration. Built with Polars for fast data operations and Qdrant for semantic search.
+- **Polars** for the document table, one parquet per collection
+- **Qdrant** in embedded mode for vectors, no server
+- **LlamaIndex** for chunking and retrieval, with the LLM and embedder swapped in per
+  endpoint
+- **No LLM in the core.** Search needs an embedder. `ask` and `query` need a chat model
+  and say so when there isn't one.
 
-## Features
+## Install
 
-- **Multi-Database Architecture** - Polars for structured data, Qdrant for vector search
-- **Multimodal Support** - Text, embeddings, images, audio, video, and documents
-- **Agent Configuration System** - Type-safe agent management with flexible model support
-- **FastAPI Backend** - RESTful API for integration with external systems
-- **Gradio UI** - Interactive web interface for agent management
-- **Vector Search** - Semantic search with hybrid dense+sparse capabilities
+```bash
+pip install -e ".[local]"          # in-process embeddings with unsloth/bge-small-en-v1.5
+```
 
-## Installation
+| extra | adds |
+|---|---|
+| `local` | `HuggingFaceEmbedding`, pulls torch |
+| `ollama` | the Ollama LLM and embedding classes |
+| `hybrid` | fastembed, for dense+sparse collections |
+| `pdf` | pypdf, for text out of PDFs |
+| `dev` | pytest |
 
-### Prerequisites
+Core alone is polars, qdrant-client, llama-index-core and the OpenAI-like classes.
+Nothing heavy until you ask for it.
 
-- Python 3.11 or higher
-- [Ollama](https://ollama.ai/) (optional, for AI model execution)
+## Quick start
 
-### Quick Start
+```bash
+cp mmdb.example.toml mmdb.toml     # edit endpoints; mmdb.toml is gitignored
+mmdb init
+mmdb ingest rocm ./reference/rocm-docs --kind web --tag rocm
+mmdb search rocm "which cards does ROCm support on Windows"
+mmdb ask rocm "is gfx1151 supported on Windows?" --llm studio
+mmdb query rocm "how many documents per kind?" --llm studio
+```
 
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/xXSup3rN0v4Xx/multimodal-db.git
-   cd multimodal-db
-   ```
-
-2. **Create a virtual environment**
-   ```bash
-   python -m venv .venv
-   .venv\Scripts\Activate.ps1  # Windows PowerShell
-   # or
-   source .venv/bin/activate    # Linux/Mac
-   ```
-
-3. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-4. **Optional: Pull AI models**
-   ```bash
-   ollama pull qwen2.5-coder:3b
-   ollama pull nomic-embed-text
-   ```
-
-## Usage
-
-### Python Library
+The same from Python:
 
 ```python
-from multimodal_db.core import (
-    MultimodalDB, 
-    QdrantVectorDB,
-    create_corecoder_agent
-)
+from multimodal_db import Ingester, Store, embedding_for, embedder_identity, load_config, search
 
-# Initialize database
-db = MultimodalDB()
+cfg = load_config()
+ep = cfg.endpoint("local", "embed")
+embed = embedding_for(ep)
 
-# Create and store an agent
-agent = create_corecoder_agent("my_coder")
-agent_id = db.add_agent(agent)
-
-# Store multimodal content
-content_id = db.store_content(
-    agent_id=agent_id,
-    content="Python optimization techniques",
-    media_type=MediaType.TEXT,
-    metadata={"category": "coding"}
-)
+with Store(cfg.root) as store:
+    with Ingester(store, "rocm", embed, identity=embedder_identity(ep, embed)) as ing:
+        for r in ing.ingest_dir("reference/rocm-docs", kind="web"):
+            print(r.status, r.document.source_id, r.document.n_chunks)
+    for hit in search(store, "rocm", "gfx1151 on Windows", embed=embed, k=5):
+        print(f"{hit.score:.3f} {hit.source_id} {hit.url}")
 ```
 
-### FastAPI Server
+## Endpoints
 
-Start the API server for external integrations:
+`mmdb.toml` names the places models are served from. Pick one per call with
+`--embed` / `--llm`, per shell with `MMDB_EMBED` / `MMDB_LLM`, or once under
+`[defaults]`.
+
+| kind | LLM | embeddings | for |
+|---|---|---|---|
+| `openai` | `OpenAILike` | `OpenAILikeEmbedding` | Unsloth Studio, llama-server, vLLM, LM Studio, anything OpenAI-shaped |
+| `huggingface` | none | `HuggingFaceEmbedding` | in-process, no server |
+| `ollama` | `Ollama` | `OllamaEmbedding` | opt-in extra |
+| `fake` | canned | hashed bag of words | tests and dry runs |
+
+```toml
+[endpoints.studio]
+kind = "openai"
+base_url = "http://127.0.0.1:8889/v1"
+api_key_env = "UNSLOTH_STUDIO_TOKEN"
+chat_model = "auto"          # GET /models, first entry
+embed_model = "auto"
+```
+
+Studio serves `/v1/chat/completions`, `/v1/completions`, `/v1/embeddings` and
+`/v1/models`. Its `/v1/embeddings` only answers while a GGUF model is loaded, so load an
+embedding GGUF there (or run `llama-server --embedding` yourself) before pointing
+`embed_model` at it. For the same model Studio uses internally without a server, use the
+`huggingface` kind with `unsloth/bge-small-en-v1.5`.
+
+**A collection is locked to one embedder.** At first ingest it records
+`kind:model:dims`, and any later ingest or search under a different one is refused rather
+than mixing vector spaces and quietly returning worse results. Move a collection with
+`mmdb reindex <collection> --embed <name>`, which re-embeds from the stored text and
+needs no source files.
+
+## Commands
+
+| command | does |
+|---|---|
+| `init` | create the store root, print what is configured |
+| `endpoints [--probe]` | list endpoints; probe asks each served one what it lists |
+| `collections` | collections with document and vector counts |
+| `ingest C PATH... [--kind --tag --url --source-id --force --hybrid]` | files or directories; source id is the relative path |
+| `ingest-manifest C MANIFEST` | a brain's reference cache from its `manifest.json` |
+| `ls C [--kind --tag --json]` | the document table |
+| `info C` | counts, bytes, the embedder it is locked to |
+| `show C SOURCE_ID [--text]` | one row |
+| `search C "q" [-k --json]` | best chunks with their source |
+| `ask C "q" [--llm]` | retrieve, then answer from what was retrieved |
+| `query C "q" [--llm]` | natural language over the document table; prints the Polars expression before running it |
+| `reindex C --embed NAME` | move a collection to another embedder |
+| `rm C SOURCE_ID` | drop one document and its vectors |
+| `drop C [--yes]` | drop a collection |
+
+## For brains
+
+A brain (an Obsidian vault with generated and hand-written layers) keeps distilled
+notes that cite a source and a date. The raw pages are too big and too full of chrome to
+live in the vault, so they sit in a reference cache next to it with a `manifest.json` of
+ids, URLs, hashes and fetch times. This is the store for that cache:
 
 ```bash
-python multimodal-db/api/run_api.py
+mmdb ingest-manifest amd-reference path/to/unsloth-amd/reference/manifest.json \
+    --alias unsloth-amd-prs=upstream-prs --embed local
+mmdb search amd-reference "hipErrorNoBinaryForGpu"
 ```
 
-Access API documentation at `http://localhost:8000/docs`
+Each manifest id becomes a document keyed by that id, with the URL, kind and fetch time
+carried through, so a note can cite `source_id` and the date and a later refresh can be
+checked against the content hash. An id that is neither `<id>.md` nor a directory of
+that name gets an `--alias` (the `gh-prs` entry above feeds `upstream-prs/`, and its
+files ingest as `unsloth-amd-prs/pr-NNNN.md`). Nothing here writes to a vault. See
+[examples/ingest_reference.py](examples/ingest_reference.py) for the same from Python and
+[examples/ingest_arxiv.py](examples/ingest_arxiv.py) for papers by id.
 
-### Gradio UI
+## On disk
 
-Launch the interactive web interface:
+```
+data/
+  collections/<name>/
+    documents.parquet     one row per document, extracted text included
+    blobs/<hh>/<sha256>.<ext>   the original bytes, content-addressed
+    meta.json             embedder identity, chunking, hybrid flag, vector generation
+  qdrant/                 embedded Qdrant; <name>__g<N>, a new generation per reindex
+```
+
+The parquet is rewritten whole on save, which is fine into the tens of thousands of
+documents. [ARCHITECTURE.md](ARCHITECTURE.md) has the data model and the reasons.
+
+## Development
 
 ```bash
-python examples/enhanced_gradio_ui.py
+pip install -e ".[dev]"
+pytest
 ```
 
-## Integration with Chatbot-Python-Core
-
-🔥 **NEW!** Multimodal-DB now integrates seamlessly with [Chatbot-Python-Core](https://github.com/xXSup3rN0v4Xx/chatbot-python-core)!
-
-**Chatbot-Python-Core** provides AI model execution (Ollama, YOLO, Whisper, Kokoro, SDXL), while **Multimodal-DB** provides storage, querying, and analytics. Together, they form a **complete AI application platform**.
-
-### Quick Integration Example
-
-```python
-import requests
-
-# 1. Chat with AI (Chatbot-Python-Core)
-response = requests.post("http://localhost:8000/api/v1/ollama/chat", json={
-    "model": "llama3.2",
-    "messages": [{"role": "user", "content": "Hello!"}]
-})
-
-# 2. Store conversation (Multimodal-DB)
-requests.post("http://localhost:8001/api/v1/conversations/message", json={
-    "agent_id": "agent-123",
-    "role": "user",
-    "content": "Hello!"
-})
-```
-
-### Integration Documentation
-
-- **[🚀 Quick Reference](docs/QUICK_REFERENCE.md)** - Fast lookup for commands and APIs
-- **[📖 How It Works Together](docs/HOW_IT_WORKS_TOGETHER.md)** - Complete integration guide with examples
-- **[🎨 Architecture Diagrams](docs/ARCHITECTURE_DIAGRAMS.md)** - Visual representations of integration patterns
-- **[🔍 Integration Analysis](docs/INTEGRATION_ANALYSIS.md)** - Technical specifications and compatibility
-- **[📊 Integration Summary](docs/INTEGRATION_SUMMARY.md)** - Implementation roadmap and status
-
-**Start here:** [docs/README.md](docs/README.md) - Choose the right document for your needs!
-
-## Documentation
-
-- **[Library Usage](docs/LIBRARY.md)** - Core components and Python API
-- **[API Reference](docs/API.md)** - FastAPI endpoints and integration
-- **[Examples](docs/EXAMPLES.md)** - Common usage patterns and recipes
-- **[Testing](docs/TESTING.md)** - Running tests and validation
-- **[CLI Commands](docs/CLI.md)** - Command-line utilities
-
-### Technology-Specific Guides
-
-- **[Polars Integration](docs/polars/polars_docs.md)** - DataFrame operations
-- **[Qdrant Vector DB](docs/qdrant/qdrant_docs.md)** - Vector search setup
-- **[LlamaIndex](docs/llamaindex/)** - RAG and query engines
-- **[Graphiti](docs/graphiti/graphiti_docs.md)** - Knowledge graph integration
-
-## Project Structure
-
-```
-multimodal-db/
-├── multimodal-db/          # Core package
-│   ├── api/                # FastAPI backend
-│   ├── core/               # Core components
-│   └── utils/              # Utilities
-├── data/                   # Database storage
-├── docs/                   # Documentation
-├── examples/               # Example scripts
-├── scripts/                # Utility scripts
-└── tests/                  # Test suite
-```
-
-## Architecture
-
-Multimodal-DB uses a layered architecture:
-
-1. **Storage Layer** - Polars (structured data) + Qdrant (vectors)
-2. **Core Layer** - Agent management, content storage, search
-3. **API Layer** - FastAPI endpoints for external access
-4. **UI Layer** - Gradio interface for human interaction
-
-This separation enables flexible deployment and scaling.
-
-## Contributing
-
-Contributions are welcome! Please ensure tests pass before submitting PRs:
-
-```bash
-pytest tests/test_optimized.py -v
-```
+The suite uses the `fake` kind and refuses any non-loopback socket, so it runs with no
+model, no server and no network.
 
 ## License
 
-Apache License 2.0 - See [LICENSE](LICENSE) for details
-
-## Links
-
-- **Repository**: https://github.com/xXSup3rN0v4Xx/multimodal-db
-- **Issues**: https://github.com/xXSup3rN0v4Xx/multimodal-db/issues
-- **Documentation**: [docs/](docs/)
-
----
-
-Built for the AI agent ecosystem by [xXSup3rN0v4Xx](https://github.com/xXSup3rN0v4Xx)
+Apache 2.0. See [LICENSE](LICENSE).
