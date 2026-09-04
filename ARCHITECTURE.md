@@ -33,7 +33,8 @@ flowchart LR
 | `store` | `Store`, `Collection`, `Document`: the parquet, the blobs, meta.json, the Qdrant client |
 | `ingest` | bytes to a row plus vectors: mime and media type, text extraction, chunking, dedup, manifests, reindex |
 | `search` | `search` (embedder only), `ask` (retrieve then answer), `query` (LLM writes one Polars expression) |
-| `cli` | click commands over the above |
+| `brain` | open a vault read-only: notes, ownership regions, wikilink graph, index it |
+| `cli`, `brain_cli` | click commands over the above |
 | `testing` | `FakeEmbedding`, `FakeLLM`: the `fake` kind |
 
 ## Data model
@@ -60,7 +61,9 @@ same bytes share one file and re-ingesting the same file writes nothing.
 
 ## Ingest
 
-1. Hash the bytes. Same id, same hash, same embedder: `unchanged`, nothing happens.
+1. Hash the bytes. Same id, same hash, same embedder: `unchanged`, or `touched` when the
+   caller passed different provenance (url, kind, title, tags, metadata), which refreshes
+   the row and leaves the vectors alone.
 2. Guess mime from the filename, extract text (markdown and text as-is, HTML stripped
    of script and style, PDF through pypdf if installed, media gets none unless the caller
    passes `text=`).
@@ -73,6 +76,24 @@ same bytes share one file and re-ingesting the same file writes nothing.
 `ingest_manifest` reads the `manifest.json` a brain's `fetch_reference.py` writes: each
 `id` resolves to `<id>.md` under the reference dir or to a directory, whose files ingest
 as `<id>/<relative path>`. URL, kind and fetch time come from the manifest entry.
+
+## Brains
+
+A brain is an Obsidian vault in the abstract-brain shape. `Brain.open(path)` reads
+`brain.toml` for the contract (markers, tail heading, folder roles, tag prefix) or infers
+the same defaults, which the AMD, NVIDIA and MLX vaults all match. Each note is parsed into
+its frontmatter (YAML), the generated block between the sync markers if there is one, the
+hand-written remainder, its wikilinks (`[[Name]]`, `[[Name|alias]]`, `[[Name#heading]]`,
+resolved by filename the way Obsidian does, with code spans and fences ignored) and its
+tags (frontmatter plus inline). `nodes()` and `edges()` are Polars frames over that;
+`export_graph` writes them as parquet plus a `{nodes, links}` json.
+
+`index()` feeds the notes through the ordinary ingester. The key is the note's path, the
+hashed bytes are the body without frontmatter, and layer, role, state, links and the rest
+of the frontmatter (minus the sync's own `synced:` clock) ride in metadata. So a daily sync
+that only rewrites `synced:` costs nothing, a note that gained a tag is `touched`, a note
+that moved from `Open/` to `Archive/` is a new key with the old one pruned, and the vault is
+never written to.
 
 ## Embedder identity
 

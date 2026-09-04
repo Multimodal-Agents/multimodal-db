@@ -113,10 +113,30 @@ needs no source files.
 
 ## For brains
 
-A brain (an Obsidian vault with generated and hand-written layers) keeps distilled
-notes that cite a source and a date. The raw pages are too big and too full of chrome to
-live in the vault, so they sit in a reference cache next to it with a `manifest.json` of
-ids, URLs, hashes and fetch times. This is the store for that cache:
+A brain is an Obsidian vault built to the [abstract-brain](https://github.com/LeoBorcherding/abstract-brain)
+shape: generated notes with a sync-owned block and a hand-written `## Thinking` half,
+hand-written Concepts and Threads, a reference cache with a manifest. `mmdb brain` opens one
+read-only, from its `brain.toml` or by inferring the same defaults for the vaults that
+predate it:
+
+```bash
+mmdb brain info "L:/AMD Brain/AMD Brain"     # layers, ownership split, link graph, tags in use
+mmdb brain load "L:/AMD Brain/AMD Brain"     # every note into brain-amd-brain
+mmdb search brain-amd-brain "why torch.compile gets disabled on a healthy ROCm host"
+mmdb brain links "L:/AMD Brain/AMD Brain" "PR 7704"
+mmdb brain graph "L:/AMD Brain/AMD Brain"    # nodes.parquet, edges.parquet, a d3-shaped graph.json
+```
+
+Notes are keyed by path and hashed on their body without frontmatter, so a sync that only
+bumps `synced:` re-embeds nothing. Layer, tags, wikilinks, state and the rest of the
+frontmatter ride along as metadata; a note that gained a tag is `touched` (row refreshed,
+vectors kept), one that moved between layers is a new key and the old one is pruned. The
+Python side is `Brain.open(path)` with `.notes`, `.nodes()`, `.edges()`, `.summary()` and
+`.index(store, embed)`.
+
+The raw reference pages a brain distils from are too big and too full of chrome to live in
+the vault, so they sit in a cache next to it with a `manifest.json` of ids, URLs, hashes
+and fetch times. This is the store for that cache too:
 
 ```bash
 mmdb ingest-manifest amd-reference path/to/unsloth-amd/reference/manifest.json \

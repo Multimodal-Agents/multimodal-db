@@ -139,7 +139,7 @@ def make_index(store: Store, coll: Collection, embed: BaseEmbedding) -> VectorSt
 
 @dataclass
 class IngestResult:
-    status: str  # added | updated | unchanged | reindexed | missing
+    status: str  # added | updated | touched | unchanged | reindexed | removed | missing
     document: Document
 
 
@@ -228,7 +228,7 @@ class Ingester:
         source_id: str,
         filename: str | None = None,
         url: str | None = None,
-        kind: str = "file",
+        kind: str | None = None,
         title: str | None = None,
         fetched_at: datetime | None = None,
         tags: Iterable[str] = (),
@@ -236,13 +236,15 @@ class Ingester:
         text: str | None = None,
         force: bool = False,
     ) -> IngestResult:
-        """Store ``data`` under ``source_id``. Same bytes under the same id is a no-op;
-        changed bytes replace the row and its vectors. ``text`` overrides extraction,
-        which is how an image or audio file gets a caption or transcript to search on."""
+        """Store ``data`` under ``source_id``. Same bytes under the same id keeps the vectors
+        and refreshes only the provenance you passed (``touched``), or is a no-op
+        (``unchanged``); changed bytes replace the row and its vectors. ``text`` overrides
+        extraction, which is how an image or audio file gets a caption or transcript to
+        search on. ``kind`` defaults to ``file`` on first ingest."""
         digest = hashlib.sha256(data).hexdigest()
         existing = self.coll.get(source_id)
         if existing and existing.content_hash == digest and existing.embedder == self.identity and not force:
-            return IngestResult("unchanged", existing)
+            return self._touch(existing, url=url, kind=kind, title=title, tags=tags, metadata=metadata)
 
         name = filename or source_id
         mime = guess_mime(name)
@@ -252,7 +254,7 @@ class Ingester:
             source_id=source_id,
             doc_id=existing.doc_id if existing else Document(source_id=source_id).doc_id,
             url=url,
-            kind=kind,
+            kind=kind or "file",
             media_type=media_type_for(mime),
             mime=mime,
             title=title or found_title,
@@ -272,6 +274,34 @@ class Ingester:
         self.coll.upsert(doc)
         self._maybe_save()
         return IngestResult("updated" if existing else "added", doc)
+
+    def _touch(self, existing: Document, *, url: str | None, kind: str | None, title: str | None,
+               tags: Iterable[str], metadata: dict[str, Any] | None) -> IngestResult:
+        """Same bytes: refresh the provenance the caller passed, keep the rest, leave the
+        vectors alone. A note that gained a tag or moved cluster is `touched`; a bare
+        re-ingest with nothing passed is `unchanged`. Clearing a field takes ``force``."""
+        tags = list(tags)
+        new = {"url": existing.url if url is None else url, "kind": existing.kind if kind is None else kind,
+               "title": existing.title if title is None else title, "tags": tags or list(existing.tags),
+               "metadata": existing.metadata if metadata is None else dict(metadata)}
+        old = {"url": existing.url, "kind": existing.kind, "title": existing.title,
+               "tags": list(existing.tags), "metadata": existing.metadata}
+        if new == old:
+            return IngestResult("unchanged", existing)
+        for key, value in new.items():
+            setattr(existing, key, value)
+        self.coll.upsert(existing)
+        self._maybe_save()
+        return IngestResult("touched", existing)
+
+    def remove(self, source_id: str) -> IngestResult:
+        """Drop one document's row and vectors. The blob stays, it is content-addressed."""
+        doc = self.coll.delete(source_id)
+        if doc is None:
+            raise KeyError(f"no document {source_id!r} in {self.coll.name!r}")
+        self._drop_vectors_for(doc.doc_id)
+        self._maybe_save()
+        return IngestResult("removed", doc)
 
     def ingest_file(
         self, path: str | Path, *, source_id: str | None = None, base: str | Path | None = None, **kw: Any

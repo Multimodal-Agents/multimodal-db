@@ -10,6 +10,7 @@ from typing import Any, Callable
 import click
 
 from . import __version__
+from .brain_cli import brain
 from .config import Config, ConfigError, load_config
 from .ingest import Ingester, IngestResult
 from .providers import embedder_identity, embedding_for, llm_for, probe
@@ -209,7 +210,7 @@ def show(state: State, collection: str, source_id: str, with_text: bool) -> None
 @click.option("--embed", "embed_name", help="Endpoint to embed with.")
 @click.option("--source-id", help="Id for a single file (default: file name).")
 @click.option("--url", help="Where a single file came from.")
-@click.option("--kind", default="file", show_default=True, help="Provenance kind: file, web, arxiv, conversation...")
+@click.option("--kind", default=None, help="Provenance kind: file, web, arxiv, conversation... (default: file)")
 @click.option("--title")
 @click.option("--tag", "tags", multiple=True, help="Repeatable.")
 @click.option("--glob", default="**/*", show_default=True, help="Which files under a directory.")
@@ -218,7 +219,7 @@ def show(state: State, collection: str, source_id: str, with_text: bool) -> None
 @pass_state
 @guarded
 def ingest(state: State, collection: str, paths: tuple[str, ...], embed_name: str | None, source_id: str | None,
-           url: str | None, kind: str, title: str | None, tags: tuple[str, ...], glob: str, force: bool,
+           url: str | None, kind: str | None, title: str | None, tags: tuple[str, ...], glob: str, force: bool,
            hybrid: bool) -> None:
     """Ingest files or directories into a collection, creating it if needed."""
     embed, identity = _embedder(state, embed_name)
@@ -375,3 +376,6 @@ def drop(state: State, collection: str, yes: bool) -> None:
         click.confirm(f"drop collection {collection!r} and everything in it?", abort=True)
     state.store.drop(collection)
     click.echo(f"dropped {collection}")
+
+
+main.add_command(brain)
