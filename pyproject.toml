@@ -39,8 +39,9 @@ local = ["llama-index-embeddings-huggingface>=0.4"]
 ollama = ["llama-index-llms-ollama>=0.5", "llama-index-embeddings-ollama>=0.5"]
 hybrid = ["fastembed>=0.3"]
 pdf = ["pypdf>=4"]
+server = ["mcp>=2.0"]
 dev = ["pytest>=8"]
-all = ["multimodal-db[local,ollama,hybrid,pdf,dev]"]
+all = ["multimodal-db[local,ollama,hybrid,pdf,server,dev]"]
 
 [project.scripts]
 mmdb = "multimodal_db.cli:main"

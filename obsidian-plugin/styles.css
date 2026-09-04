@@ -1,0 +1,95 @@
+.mmdb-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 6px;
+}
+
+.mmdb-bar {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.mmdb-input {
+  flex: 1;
+  min-width: 120px;
+}
+
+.mmdb-button {
+  padding: 4px 8px;
+}
+
+.mmdb-toggle {
+  display: inline-flex;
+  gap: 3px;
+  align-items: center;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+
+.mmdb-status {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  margin: 2px 0 6px;
+}
+
+.mmdb-results {
+  overflow-y: auto;
+  flex: 1;
+}
+
+.mmdb-hit {
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.mmdb-hit-head {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.mmdb-score {
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller);
+  color: var(--text-accent);
+}
+
+.mmdb-link {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.mmdb-layer {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+
+.mmdb-hit-id,
+.mmdb-empty {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+}
+
+.mmdb-snippet {
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.mmdb-graph-root {
+  padding: 4px;
+}
+
+.mmdb-canvas {
+  flex: 1;
+  width: 100%;
+  background: var(--background-primary);
+  border-radius: 4px;
+}

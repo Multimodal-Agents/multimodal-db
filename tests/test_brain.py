@@ -163,14 +163,14 @@ def test_cli(tmp_path, docs_dir):
     cfg.write_text('[store]\nroot = "data"\n[defaults]\nembed = "fake"\n[endpoints.fake]\nkind = "fake"\n', "utf-8")
     r = CliRunner()
     out = r.invoke(main, ["--config", str(cfg), "brain", "info", str(v)], catch_exceptions=False)
-    assert out.exit_code == 0 and "Test Brain" in out.output and "prefix       test" in out.output and "Open" in out.output
+    assert out.exit_code == 0 and "Test Brain" in out.output and "prefix        test" in out.output and "Open" in out.output
     out = r.invoke(main, ["--config", str(cfg), "brain", "notes", str(v), "--layer", "Open"], catch_exceptions=False)
     assert "Issue 1" in out.output and "Concept A" not in out.output
     out = r.invoke(main, ["--config", str(cfg), "brain", "links", str(v), "Issue 1"], catch_exceptions=False)
     assert "out (3)" in out.output and "in (4)" in out.output
     out = r.invoke(main, ["--config", str(cfg), "brain", "graph", str(v)], catch_exceptions=False)
-    assert (tmp_path / "data" / "graphs" / "test-brain" / "graph.json").exists()
+    assert (tmp_path / "data" / "graphs" / "vault" / "graph.json").exists()
     out = r.invoke(main, ["--config", str(cfg), "brain", "load", str(v)], catch_exceptions=False)
-    assert out.exit_code == 0 and "9 added" in out.output and "collection brain-test-brain" in out.output
-    out = r.invoke(main, ["--config", str(cfg), "search", "brain-test-brain", "root cause kernel"], catch_exceptions=False)
+    assert out.exit_code == 0 and "9 added" in out.output and "collection brain-vault" in out.output
+    out = r.invoke(main, ["--config", str(cfg), "search", "brain-vault", "root cause kernel"], catch_exceptions=False)
     assert "Clusters/Cluster A" in out.output

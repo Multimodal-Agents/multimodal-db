@@ -1,4 +1,5 @@
-"""``mmdb brain``: open a vault read-only, describe it, export its graph, index it."""
+"""``mmdb brain``: open a vault read-only, describe it, export its graph, index it. Every
+command takes a registered brain name from mmdb.toml or a vault path."""
 from __future__ import annotations
 
 import json
@@ -7,6 +8,7 @@ from pathlib import Path
 import click
 
 from .brain import Brain
+from .config import BrainEntry, ConfigError
 from .ingest import IngestResult
 
 
@@ -17,25 +19,56 @@ def _table(rows: list[list], headers: list[str]) -> str:
     return "\n".join([line(headers), line(["-" * w for w in widths]), *(line(r) for r in cells)])
 
 
+def _open(ctx: click.Context, ref: str) -> tuple[BrainEntry, Brain]:
+    state = ctx.find_root().obj
+    try:
+        entry = state.cfg.resolve_brain(ref)
+    except ConfigError as e:
+        raise click.ClickException(str(e)) from e
+    if not entry.path.is_dir():
+        raise click.ClickException(f"brain {entry.name!r}: {entry.path} is not a directory")
+    return entry, Brain.open(entry.path)
+
+
 @click.group()
 def brain() -> None:
-    """Open a brain (an Obsidian vault in the abstract-brain shape). Read-only."""
+    """Open a brain (an Obsidian vault in the abstract-brain shape). Read-only. BRAIN is a
+    name from [brains] in mmdb.toml or a vault path."""
+
+
+@brain.command("list")
+@click.pass_context
+def list_brains(ctx: click.Context) -> None:
+    """Registered brains, whether they exist, and what is indexed."""
+    state = ctx.find_root().obj
+    rows = []
+    for entry in state.cfg.brains.values():
+        docs = vectors = "-"
+        if entry.collection in state.store.collections():
+            docs = state.store.collection(entry.collection).count()
+            vectors = state.store.vector_count(entry.collection)
+        rows.append([entry.name, "yes" if entry.path.is_dir() else "MISSING", entry.collection, docs, vectors, entry.path])
+    click.echo(_table(rows, ["brain", "exists", "collection", "docs", "vectors", "path"]) if rows
+               else "no brains registered; add [brains.<name>] path = \"...\" to mmdb.toml")
 
 
 @brain.command()
-@click.argument("path", type=click.Path(exists=True, file_okay=False))
+@click.argument("ref", metavar="BRAIN")
 @click.option("--json", "as_json", is_flag=True)
-def info(path: str, as_json: bool) -> None:
+@click.pass_context
+def info(ctx: click.Context, ref: str, as_json: bool) -> None:
     """Layers, the ownership split, the link graph, the tags in use."""
-    s = Brain.open(path).summary()
+    entry, b = _open(ctx, ref)
+    s = b.summary()
+    s["registered_as"], s["collection"] = entry.name, entry.collection
     if as_json:
         click.echo(json.dumps(s, indent=1))
         return
-    for key in ("name", "prefix", "root", "contract"):
-        click.echo(f"{key:<12} {s[key]}")
-    click.echo(f"{'notes':<12} {s['notes']}  ({s['generated']} generated, {s['hand_written']} hand-written, "
+    for key in ("name", "registered_as", "collection", "prefix", "root", "contract"):
+        click.echo(f"{key:<13} {s[key]}")
+    click.echo(f"{'notes':<13} {s['notes']}  ({s['generated']} generated, {s['hand_written']} hand-written, "
                f"{s['with_thinking']} with thinking)")
-    click.echo(f"{'links':<12} {s['links']}  ({s['unresolved_links']} unresolved, {s['orphans']} orphan notes)")
+    click.echo(f"{'links':<13} {s['links']}  ({s['unresolved_links']} unresolved, {s['orphans']} orphan notes)")
     click.echo("")
     click.echo(_table([[k, v["notes"], v["generated"], v["with_thinking"]] for k, v in s["by_layer"].items()],
                       ["layer", "notes", "generated", "thinking"]))
@@ -44,15 +77,17 @@ def info(path: str, as_json: bool) -> None:
 
 
 @brain.command()
-@click.argument("path", type=click.Path(exists=True, file_okay=False))
+@click.argument("ref", metavar="BRAIN")
 @click.option("--layer", "layers", multiple=True, help="Only these layers. Repeatable.")
 @click.option("--thinking", is_flag=True, help="Only notes with a hand-written half.")
 @click.option("--json", "as_json", is_flag=True)
-def notes(path: str, layers: tuple[str, ...], thinking: bool, as_json: bool) -> None:
+@click.pass_context
+def notes(ctx: click.Context, ref: str, layers: tuple[str, ...], thinking: bool, as_json: bool) -> None:
     """List notes with their layer, kind, state and link counts."""
     import polars as pl
 
-    df = Brain.open(path).nodes()
+    _, b = _open(ctx, ref)
+    df = b.nodes()
     if layers:
         df = df.filter(pl.col("layer").is_in(list(layers)))
     if thinking:
@@ -67,16 +102,17 @@ def notes(path: str, layers: tuple[str, ...], thinking: bool, as_json: bool) -> 
 
 
 @brain.command()
-@click.argument("path", type=click.Path(exists=True, file_okay=False))
+@click.argument("ref", metavar="BRAIN")
 @click.argument("note")
-def links(path: str, note: str) -> None:
+@click.pass_context
+def links(ctx: click.Context, ref: str, note: str) -> None:
     """What a note links to and what links to it."""
     import polars as pl
 
-    b = Brain.open(path)
+    entry, b = _open(ctx, ref)
     n = b.note(note)
     if n is None:
-        raise click.ClickException(f"no note {note!r} in {b.name}")
+        raise click.ClickException(f"no note {note!r} in {entry.name}")
     edges = b.edges()
     click.echo(f"{n.path}  [{n.layer}] {n.title}")
     click.echo(f"tags: {', '.join(n.tags) or '-'}")
@@ -91,33 +127,59 @@ def links(path: str, note: str) -> None:
 
 
 @brain.command()
-@click.argument("path", type=click.Path(exists=True, file_okay=False))
+@click.argument("ref", metavar="BRAIN")
+@click.argument("note")
+@click.option("-k", "top_k", default=8, show_default=True)
+@click.pass_context
+def related(ctx: click.Context, ref: str, note: str, top_k: int) -> None:
+    """Notes nearest to one note by vector similarity. Needs the brain loaded."""
+    from .search import similar
+
+    state = ctx.find_root().obj
+    entry, b = _open(ctx, ref)
+    n = b.note(note)
+    if n is None:
+        raise click.ClickException(f"no note {note!r} in {entry.name}")
+    try:
+        rows = similar(state.store, entry.collection, n.source_id, k=top_k)
+    except KeyError as e:
+        raise click.ClickException(f"{e.args[0]} (load the brain first)") from e
+    layer_of = {x.source_id: x.layer for x in b.notes}
+    for r in rows:
+        click.echo(f"{r.score:.3f}  {r.source_id:<40} [{layer_of.get(r.source_id, '?')}] {r.title or ''}")
+    if not rows:
+        click.echo("no neighbours (is the brain loaded?)")
+
+
+@brain.command()
+@click.argument("ref", metavar="BRAIN")
 @click.option("--out", type=click.Path(file_okay=False), help="Directory to write into (default: <store root>/graphs/<brain>).")
 @click.pass_context
-def graph(ctx: click.Context, path: str, out: str | None) -> None:
+def graph(ctx: click.Context, ref: str, out: str | None) -> None:
     """Write nodes.parquet, edges.parquet and a d3-shaped graph.json."""
-    b = Brain.open(path)
     state = ctx.find_root().obj
-    target = Path(out) if out else Path(state.cfg.root) / "graphs" / b.slug
+    entry, b = _open(ctx, ref)
+    target = Path(out) if out else Path(state.cfg.root) / "graphs" / entry.name
     written = b.export_graph(target)
     for k, p in written.items():
         click.echo(f"{k:<6} {p}")
 
 
 @brain.command()
-@click.argument("path", type=click.Path(exists=True, file_okay=False))
-@click.option("--collection", help="Default: brain-<slug>.")
+@click.argument("ref", metavar="BRAIN")
+@click.option("--collection", help="Default: the registered collection, or brain-<slug>.")
 @click.option("--embed", "embed_name")
 @click.option("--layer", "layers", multiple=True, help="Only these layers. Repeatable.")
 @click.option("--no-prune", is_flag=True, help="Keep rows for notes that no longer exist.")
 @click.pass_context
-def load(ctx: click.Context, path: str, collection: str | None, embed_name: str | None,
+def load(ctx: click.Context, ref: str, collection: str | None, embed_name: str | None,
          layers: tuple[str, ...], no_prune: bool) -> None:
     """Index every note into the store; then `mmdb search <collection> "..."`."""
     from .cli import _embedder
 
     state = ctx.find_root().obj
-    b = Brain.open(path)
+    entry, b = _open(ctx, ref)
+    collection = collection or entry.collection
     embed, identity = _embedder(state, embed_name)
     counts: dict[str, int] = {}
     changed: list[IngestResult] = []
@@ -132,4 +194,4 @@ def load(ctx: click.Context, path: str, collection: str | None, embed_name: str 
     if len(changed) > 40:
         click.echo(f"... and {len(changed) - 40} more")
     click.echo(", ".join(f"{v} {k}" for k, v in sorted(counts.items())) or "nothing to do")
-    click.echo(f"collection {collection or 'brain-' + b.slug}")
+    click.echo(f"collection {collection}")

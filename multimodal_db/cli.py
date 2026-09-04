@@ -378,4 +378,28 @@ def drop(state: State, collection: str, yes: bool) -> None:
     click.echo(f"dropped {collection}")
 
 
+@main.command()
+@click.option("--host", default="127.0.0.1", show_default=True)
+@click.option("--port", default=8765, show_default=True)
+@click.option("--stdio", is_flag=True, help="MCP over stdio for a single client instead of HTTP.")
+@pass_state
+@guarded
+def serve(state: State, host: str, port: int, stdio: bool) -> None:
+    """Run the server: MCP at /mcp for Claude, JSON at /api for the Obsidian plugin."""
+    try:
+        from .server import serve as _serve
+    except ImportError as e:
+        raise click.ClickException('the server needs: pip install "multimodal-db[server]"') from e
+    state.close()  # the server opens its own store; two handles would fight over the Qdrant lock
+    if not stdio:
+        click.echo(f"multimodal-db {__version__} on http://{host}:{port}  (MCP /mcp, JSON /api, store {state.cfg.root})")
+        for entry in state.cfg.brains.values():
+            click.echo(f"  brain {entry.name:<12} {entry.path}")
+    _serve(state.cfg, host=host, port=port, stdio=stdio)
+
+
 main.add_command(brain)
+
+
+if __name__ == "__main__":
+    main()

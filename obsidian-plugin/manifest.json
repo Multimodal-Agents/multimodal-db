@@ -1,0 +1,10 @@
+{
+  "id": "multimodal-db",
+  "name": "Multimodal DB",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "Semantic search, related notes and a similarity graph for this vault, served by a local multimodal-db.",
+  "author": "Leo Borcherding",
+  "authorUrl": "https://github.com/Multimodal-Agents/multimodal-db",
+  "isDesktopOnly": true
+}

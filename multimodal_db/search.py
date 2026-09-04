@@ -40,6 +40,15 @@ class QueryResult:
     result: Any
 
 
+@dataclass
+class Related:
+    source_id: str
+    title: str | None
+    score: float
+    kind: str
+    url: str | None
+
+
 class QueryError(RuntimeError):
     pass
 
@@ -85,8 +94,14 @@ def search(
     if store.vector_count(collection) == 0:
         return []
     index = make_index(store, coll, embed)
-    retriever = index.as_retriever(similarity_top_k=k, vector_store_query_mode=_mode(coll, hybrid))
-    return [_hit(n) for n in retriever.retrieve(query)]
+    retriever = index.as_retriever(similarity_top_k=k * 4, vector_store_query_mode=_mode(coll, hybrid))
+    hits: dict[str, Hit] = {}
+    for n in retriever.retrieve(query):  # one row per document: its best chunk, in score order
+        h = _hit(n)
+        hits.setdefault(h.source_id, h)
+        if len(hits) >= k:
+            break
+    return list(hits.values())
 
 
 def ask(
@@ -108,6 +123,63 @@ def ask(
     engine = index.as_query_engine(llm=llm, similarity_top_k=k, vector_store_query_mode=_mode(coll, hybrid))
     response = engine.query(question)
     return Answer(str(response), [_hit(n) for n in response.source_nodes])
+
+
+def similar(store: Store, collection: str, source_id: str, *, k: int = 8) -> list[Related]:
+    """Documents nearest to one already in the collection, by Qdrant's recommend over its
+    own chunk vectors. No model call: the document's vectors are the query. Aggregated to
+    one row per document, best chunk score wins."""
+    from qdrant_client import models
+
+    coll = store.collection(collection)
+    doc = coll.get(source_id)
+    if doc is None:
+        raise KeyError(f"no document {source_id!r} in {collection!r}")
+    qname = coll.vector_collection
+    client = store.qdrant
+    if not client.collection_exists(qname):
+        return []
+    same_doc = models.FieldCondition(key="doc_id", match=models.MatchValue(value=doc.doc_id))
+    points, _ = client.scroll(qname, scroll_filter=models.Filter(must=[same_doc]), limit=256,
+                              with_payload=False, with_vectors=False)
+    ids = [p.id for p in points]
+    if not ids:
+        return []
+    res = client.query_points(
+        qname,
+        query=models.RecommendQuery(recommend=models.RecommendInput(positive=ids)),
+        query_filter=models.Filter(must_not=[same_doc]),
+        limit=max(k * 4, 20),
+        with_payload=["source_id", "title", "kind", "url"],
+    )
+    best: dict[str, Related] = {}
+    for p in res.points:  # ordered by score, so the first sighting of a document is its best chunk
+        sid = (p.payload or {}).get("source_id")
+        if not sid or sid in best:
+            continue
+        best[sid] = Related(sid, p.payload.get("title") or None, float(p.score), p.payload.get("kind") or "",
+                            p.payload.get("url") or None)
+        if len(best) >= k:
+            break
+    return list(best.values())
+
+
+def similarity_edges(store: Store, collection: str, *, k: int = 5, min_score: float = 0.0) -> list[tuple[str, str, float]]:
+    """Undirected nearest-neighbour edges over a whole collection: (a, b, score), each pair once."""
+    coll = store.collection(collection)
+    ids = coll.frame().filter(pl.col("n_chunks") > 0)["source_id"].to_list()
+    seen: set[tuple[str, str]] = set()
+    out: list[tuple[str, str, float]] = []
+    for sid in ids:
+        for r in similar(store, collection, sid, k=k):
+            if r.score < min_score:
+                continue
+            key = (sid, r.source_id) if sid < r.source_id else (r.source_id, sid)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append((sid, r.source_id, r.score))
+    return out
 
 
 QUERY_PROMPT = """You have a Polars DataFrame named `df`, one row per document in a collection.

@@ -110,6 +110,8 @@ needs no source files.
 | `reindex C --embed NAME` | move a collection to another embedder |
 | `rm C SOURCE_ID` | drop one document and its vectors |
 | `drop C [--yes]` | drop a collection |
+| `serve [--port 8765 --stdio]` | one long-lived process: MCP for Claude at `/mcp`, JSON for the Obsidian plugin at `/api` |
+| `brain list\|info\|notes\|links\|related\|graph\|load BRAIN` | a registered brain by name, or any vault by path; see below |
 
 ## For brains
 
@@ -119,13 +121,25 @@ hand-written Concepts and Threads, a reference cache with a manifest. `mmdb brai
 read-only, from its `brain.toml` or by inferring the same defaults for the vaults that
 predate it:
 
-```bash
-mmdb brain info "L:/AMD Brain/AMD Brain"     # layers, ownership split, link graph, tags in use
-mmdb brain load "L:/AMD Brain/AMD Brain"     # every note into brain-amd-brain
-mmdb search brain-amd-brain "why torch.compile gets disabled on a healthy ROCm host"
-mmdb brain links "L:/AMD Brain/AMD Brain" "PR 7704"
-mmdb brain graph "L:/AMD Brain/AMD Brain"    # nodes.parquet, edges.parquet, a d3-shaped graph.json
+```toml
+[brains.amd]
+path = "L:/AMD Brain/AMD Brain"      # collection brain-amd unless you say otherwise
+[brains.nvidia]
+path = "L:/nvidia-brain"
 ```
+
+```bash
+mmdb brain list                      # what is registered, what is indexed
+mmdb brain info amd                  # layers, ownership split, link graph, tags in use
+mmdb brain load amd                  # every note into brain-amd; rerun after a sync, unchanged notes cost nothing
+mmdb search brain-amd "why torch.compile gets disabled on a healthy ROCm host"
+mmdb brain related amd "PR 5303"     # nearest notes by vector, no query needed
+mmdb brain links amd "PR 7704"
+mmdb brain graph amd                 # nodes.parquet, edges.parquet, a d3-shaped graph.json
+```
+
+Any command also takes a vault path instead of a name. Each brain stays its own vault; the
+registry is only names to paths.
 
 Notes are keyed by path and hashed on their body without frontmatter, so a sync that only
 bumps `synced:` re-embeds nothing. Layer, tags, wikilinks, state and the rest of the
@@ -151,6 +165,25 @@ that name gets an `--alias` (the `gh-prs` entry above feeds `upstream-prs/`, and
 files ingest as `unsloth-amd-prs/pr-NNNN.md`). Nothing here writes to a vault. See
 [examples/ingest_reference.py](examples/ingest_reference.py) for the same from Python and
 [examples/ingest_arxiv.py](examples/ingest_arxiv.py) for papers by id.
+
+### Serving brains to Claude and to Obsidian
+
+Embedded Qdrant locks its directory to one process, so the way many sessions and a plugin
+share one store is one long-lived server:
+
+```bash
+pip install "multimodal-db[server]"
+mmdb serve                            # http://127.0.0.1:8765, MCP at /mcp, JSON at /api
+claude mcp add --transport http mmdb http://127.0.0.1:8765/mcp
+```
+
+Claude then has `list_brains`, `search_brain`, `related_notes`, `read_note`, `brain_info`,
+`search_collection`, `ask`, `list_collections` and `load_brain`, and can work any registered
+brain by name. The same process answers the [Obsidian plugin](obsidian-plugin/) at
+`/api/brains/<name>/{search,related,graph,note}`: semantic search over the open vault, the
+notes nearest to the one you are reading, and a graph with wikilinks and similarity edges
+side by side. The plugin matches its vault to a brain by path, reads only, and never writes
+into the vault. `--stdio` runs MCP over stdio instead for a single client.
 
 ## On disk
 

@@ -11,6 +11,17 @@ chunk_overlap = 64
 embed = "local"
 llm = "studio"
 
+# Brains: one Obsidian vault each, opened read-only by name. `mmdb brain list`,
+# `mmdb brain load amd`, `mmdb serve` exposes all of them to Claude and the plugin.
+[brains.amd]
+path = "L:/AMD Brain/AMD Brain"
+
+[brains.nvidia]
+path = "L:/nvidia-brain"
+
+[brains.mlx]
+path = "L:/mlx-brain"
+
 # kind = "openai": anything that speaks the OpenAI HTTP API. Unsloth Studio, a bare
 # llama-server, vLLM, LM Studio. "auto" for a model name asks GET /models and takes the
 # first entry. Studio note: /v1/embeddings only answers while a GGUF model is loaded, so

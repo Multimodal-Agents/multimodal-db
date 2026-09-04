@@ -7,6 +7,7 @@ file at all you get one ``local`` endpoint that embeds in-process with
 from __future__ import annotations
 
 import os
+import re
 import tomllib
 from dataclasses import dataclass, field, fields
 from pathlib import Path
@@ -49,6 +50,19 @@ class Endpoint:
         return None
 
 
+def slugify(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:48] or "brain"
+
+
+@dataclass
+class BrainEntry:
+    """A registered brain: a vault on disk and the collection its notes index into."""
+
+    name: str
+    path: Path
+    collection: str
+
+
 @dataclass
 class Config:
     root: Path
@@ -58,6 +72,22 @@ class Config:
     chunk_size: int = 512
     chunk_overlap: int = 64
     path: Path | None = None
+    brains: dict[str, BrainEntry] = field(default_factory=dict)
+
+    def resolve_brain(self, ref: str) -> BrainEntry:
+        """A registered name, or a vault path (registered or not)."""
+        if ref in self.brains:
+            return self.brains[ref]
+        p = Path(ref)
+        if p.is_dir():
+            p = p.resolve()
+            for entry in self.brains.values():
+                if entry.path.resolve() == p:
+                    return entry
+            slug = slugify(p.name)
+            return BrainEntry(name=slug, path=p, collection=f"brain-{slug}")
+        known = ", ".join(self.brains) or "none registered"
+        raise ConfigError(f"no brain {ref!r}: not a registered name ({known}) and not a directory")
 
     def endpoint(self, name: str | None, role: str) -> Endpoint:
         """The endpoint for ``role`` ("embed" or "llm"): explicit name, then
@@ -126,6 +156,15 @@ def parse_config(path: Path) -> Config:
     if not root.is_absolute():
         root = (path.parent / root).resolve()
 
+    brains: dict[str, BrainEntry] = {}
+    for name, spec in raw.get("brains", {}).items():
+        if not isinstance(spec, dict) or not spec.get("path"):
+            raise ConfigError(f"[brains.{name}] needs a path")
+        bpath = Path(spec["path"])
+        if not bpath.is_absolute():
+            bpath = (path.parent / bpath).resolve()
+        brains[name] = BrainEntry(name=name, path=bpath, collection=spec.get("collection") or f"brain-{slugify(name)}")
+
     cfg = Config(
         root=root,
         endpoints=endpoints,
@@ -134,6 +173,7 @@ def parse_config(path: Path) -> Config:
         chunk_size=int(store.get("chunk_size", 512)),
         chunk_overlap=int(store.get("chunk_overlap", 64)),
         path=path,
+        brains=brains,
     )
     for role, chosen in (("embed", cfg.default_embed), ("llm", cfg.default_llm)):
         if chosen and chosen not in endpoints:

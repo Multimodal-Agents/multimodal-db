@@ -34,6 +34,7 @@ flowchart LR
 | `ingest` | bytes to a row plus vectors: mime and media type, text extraction, chunking, dedup, manifests, reindex |
 | `search` | `search` (embedder only), `ask` (retrieve then answer), `query` (LLM writes one Polars expression) |
 | `brain` | open a vault read-only: notes, ownership regions, wikilink graph, index it |
+| `server` | one process over the store and the registered brains: MCP tools for Claude, JSON routes for the Obsidian plugin, related-notes and similarity graph |
 | `cli`, `brain_cli` | click commands over the above |
 | `testing` | `FakeEmbedding`, `FakeLLM`: the `fake` kind |
 
@@ -95,6 +96,14 @@ that only rewrites `synced:` costs nothing, a note that gained a tag is `touched
 that moved from `Open/` to `Archive/` is a new key with the old one pruned, and the vault is
 never written to.
 
+Brains are registered by name in `mmdb.toml` (`[brains.amd] path = ...`); a name resolves
+to its vault and its collection, and a bare path resolves to a registered name when one has
+that path. `related` is Qdrant's recommend over a note's own chunk vectors, filtered to
+other documents and aggregated to one row per note, so it needs no model call. The graph
+the server hands out is the wikilink edges plus a similarity edge from each note to its top
+`k` neighbours above `min`, computed once per (vault signature, index size, k, min) and
+cached; a vault edit or a `load` invalidates it. 582 notes take about ten seconds cold.
+
 ## Embedder identity
 
 A collection records `kind:model:dims` the first time anything is embedded into it.
@@ -127,8 +136,8 @@ prints the expression before the result.
 
 ## Not here, on purpose
 
-- No REST API and no UI. Consumers are Python and the CLI. If a session needs to query
-  it directly, the right surface is a small MCP server, not a web app.
+- No web UI. Consumers are Python, the CLI, MCP (Claude) and the Obsidian plugin, which
+  is a thin client over `mmdb serve` and keeps the vault as the source of truth.
 - No agent or conversation model. A transcript is a document of `kind = "conversation"`.
 - No graph database. Brains already have wikilinks.
 - No crawler. `fetch_reference.py`, an arXiv fetch, agentChef: they produce bytes and
@@ -139,6 +148,7 @@ prints the expression before the result.
 - The parquet is held in memory and rewritten whole. Fine to the tens of thousands of
   documents; partition it past that.
 - Embedded Qdrant locks its directory to one process. Two `mmdb` invocations at once on
-  the same root will not both get it.
+  the same root will not both get it; `mmdb serve` is the one process when several
+  clients need the store.
 - Image, audio and video are stored and indexed by whatever text you give them. Embedding
   the media itself (CLIP, audio models) would be another embedder kind on the same rows.
