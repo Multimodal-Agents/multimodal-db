@@ -62,6 +62,14 @@ def test_service_end_to_end(cfg):
         assert all("/" not in n["id"] or not n["id"].endswith(".md") for n in g["nodes"])
         assert svc.graph("test", k=3, min_score=0.0) is g  # cached until the vault or the index changes
 
+        m = svc.map("test")
+        assert m["method"] in ("tsne", "pca") and len(m["points"]) == 9
+        assert all(-1 <= p["x"] <= 1 and -1 <= p["y"] <= 1 for p in m["points"])
+        assert {p["id"] for p in m["points"]} == {n["id"] for n in g["nodes"]}
+        assert svc.map("test") is m
+        node = next(n for n in g["nodes"] if n["id"] == "Open/Issue 1")
+        assert "created" in node and "updated" in node and node["mtime"] > 1e9
+
         assert svc.ask("test", "what is gfx1151?", k=2)["answer"] == "(fake answer)"
         with pytest.raises(KeyError):
             svc.note("test", "Nope")
@@ -85,6 +93,7 @@ def test_http_routes(cfg):
         g2 = c.get("/api/brains/test/graph", params={"similar": 0}).json()
         assert all(l["kind"] == "wikilink" for l in g2["links"])
         assert c.get("/api/brains/test/note", params={"path": "Open/Issue 1"}).json()["layer"] == "Open"
+        assert len(c.get("/api/brains/test/map").json()["points"]) == 9
         assert c.get("/api/collections").json()[0]["name"] == "brain-test"
         assert c.get("/api/search", params={"collection": "brain-test", "q": "kernel root cause"}).json()[0]["id"] == "Clusters/Cluster A"
         assert c.get("/api/brains/nope").status_code == 400

@@ -39,6 +39,21 @@ export interface GraphNode {
   out: number;
   has_thinking: boolean;
   generated: boolean;
+  mtime?: number;
+  created?: string;
+  updated?: string;
+}
+
+export interface MapPoint {
+  id: string;
+  x: number;
+  y: number;
+}
+
+export interface SemanticMap {
+  brain: string;
+  method: string;
+  points: MapPoint[];
 }
 
 export interface GraphLink {
@@ -106,6 +121,10 @@ export class MmdbClient {
 
   graph(brain: string, k: number, min: number, similar: boolean): Promise<Graph> {
     return this.call("GET", `/api/brains/${encodeURIComponent(brain)}/graph`, { k, min, similar: similar ? 1 : 0 });
+  }
+
+  map(brain: string): Promise<SemanticMap> {
+    return this.call("GET", `/api/brains/${encodeURIComponent(brain)}/map`);
   }
 
   load(brain: string): Promise<{ counts: Record<string, number>; docs: number; vectors: number }> {

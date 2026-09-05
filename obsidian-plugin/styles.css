@@ -87,6 +87,29 @@
   padding: 4px;
 }
 
+.mmdb-graph-root .mmdb-bar {
+  margin-bottom: 3px;
+}
+
+.mmdb-select {
+  font-size: var(--font-ui-smaller);
+  height: 26px;
+}
+
+.mmdb-range {
+  width: 90px;
+  margin: 0 4px;
+}
+
+.mmdb-range-value {
+  font-family: var(--font-monospace);
+  min-width: 2.5em;
+}
+
+.mmdb-hidden {
+  display: none;
+}
+
 .mmdb-canvas {
   flex: 1;
   width: 100%;

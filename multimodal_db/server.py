@@ -194,12 +194,18 @@ class Service:
             return self._graphs[key]
         nodes = b.nodes()
         strip = lambda p: p[:-3] if p.endswith(".md") else p  # noqa: E731
+        fm = {n.path: n.frontmatter for n in b.notes}
+        date = lambda path, key: str(fm.get(path, {}).get(key) or "")[:10]  # noqa: E731
+        epoch = lambda v: v.timestamp() if hasattr(v, "timestamp") else float(v or 0)  # noqa: E731
         graph: dict[str, Any] = {
             "brain": entry.name,
             "indexed": indexed,
             "nodes": [{"id": strip(r["path"]), "name": r["name"], "layer": r["layer"], "kind": r["kind"],
                        "state": r["state"], "title": r["title"], "tags": r["tags"], "in": r["n_in"], "out": r["n_out"],
-                       "has_thinking": r["has_thinking"], "generated": r["generated"]} for r in nodes.to_dicts()],
+                       "has_thinking": r["has_thinking"], "generated": r["generated"], "mtime": epoch(r["mtime"]),
+                       "created": date(r["path"], "created"),
+                       "updated": date(r["path"], "updated") or date(r["path"], "corrected")}
+                      for r in nodes.to_dicts()],
             "links": [{"source": strip(r["src"]), "target": strip(r["dst"]), "kind": "wikilink"}
                       for r in b.edges().to_dicts() if r["resolved"]],
         }
@@ -208,6 +214,62 @@ class Service:
                                for a, c, s in similarity_edges(self.store, entry.collection, k=k, min_score=min_score)]
         self._graphs[key] = graph
         return graph
+
+    def map(self, ref: str) -> dict[str, Any]:
+        """A semantic map: one point per note from the mean of its chunk vectors, projected to
+        2D with t-SNE (PCA if scikit-learn is missing). Coordinates are in [-1, 1]."""
+        import numpy as np
+
+        entry, b = self.brain(ref)
+        if entry.collection not in self.store.collections():
+            raise KeyError(f"brain {entry.name!r} is not indexed yet; load it first")
+        vectors = self.store.vector_count(entry.collection)
+        key = (entry.name, self._brains[entry.name][0], vectors, "map")
+        if key in self._graphs:
+            return self._graphs[key]
+        qname = self.store.collection(entry.collection).vector_collection
+        sums: dict[str, Any] = {}
+        counts: dict[str, int] = {}
+        offset = None
+        while True:
+            points, offset = self.store.qdrant.scroll(qname, limit=1024, offset=offset, with_payload=["source_id"],
+                                                      with_vectors=True)
+            for p in points:
+                sid = (p.payload or {}).get("source_id")
+                vec = p.vector if isinstance(p.vector, list) else (p.vector or {}).get("text-dense")
+                if not sid or vec is None:
+                    continue
+                v = np.asarray(vec, dtype=np.float32)
+                sums[sid] = sums[sid] + v if sid in sums else v
+                counts[sid] = counts.get(sid, 0) + 1
+            if offset is None:
+                break
+        ids = list(sums)
+        result: dict[str, Any] = {"brain": entry.name, "method": "none", "points": []}
+        if len(ids) >= 4:
+            x = np.stack([sums[s] / counts[s] for s in ids])
+            x /= np.linalg.norm(x, axis=1, keepdims=True) + 1e-9
+            y, result["method"] = _project_2d(x)
+            y = y - y.mean(axis=0)
+            y /= np.abs(y).max() + 1e-9
+            result["points"] = [{"id": s, "x": round(float(px), 4), "y": round(float(py), 4)} for s, (px, py) in zip(ids, y)]
+        self._graphs[key] = result
+        return result
+
+
+def _project_2d(x: Any) -> tuple[Any, str]:
+    import numpy as np
+
+    n = x.shape[0]
+    try:
+        from sklearn.manifold import TSNE
+
+        tsne = TSNE(n_components=2, perplexity=max(2.0, min(30.0, (n - 1) / 3)), init="pca", random_state=0)
+        return tsne.fit_transform(x), "tsne"
+    except ImportError:
+        centred = x - x.mean(axis=0)
+        _, _, vt = np.linalg.svd(centred, full_matrices=False)
+        return centred @ vt[:2].T, "pca"
 
 
 def build_server(svc: Service):
@@ -320,6 +382,11 @@ def build_server(svc: Service):
         q = request.query_params
         return await svc.run(svc.graph, request.path_params["name"], k=_int(request, "k", 5),
                              min_score=float(q.get("min", 0.75)), similar=q.get("similar", "1") != "0")
+
+    @server.custom_route("/api/brains/{name}/map", methods=["GET"])
+    @_json
+    async def brain_map(request: Request) -> dict[str, Any]:
+        return await svc.run(svc.map, request.path_params["name"])
 
     @server.custom_route("/api/brains/{name}/load", methods=["POST"])
     @_json

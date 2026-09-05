@@ -34,10 +34,23 @@ plugin reads from the server and opens notes. It never writes into the vault.
 |---|---|---|
 | search | query the brain semantically, click a hit to open it | right sidebar |
 | related | nearest notes to the active note by vector similarity, no query needed | right sidebar |
-| graph | every note as a node coloured by layer, wikilinks grey, similarity links orange with score as opacity; drag, zoom, click to open; toggle layers and edge kinds | main pane, ribbon icon |
+| graph | five modes over one canvas, see below | main pane, ribbon icon |
 
-The graph hides `Archive/` by default (settings). Similar-link count and the minimum score are
-settings too, and they map straight onto `GET /api/brains/<name>/graph?k=&min=`.
+The graph reads the vault's own `.obsidian/graph.json`, so it starts with the same colour
+groups, saved filter and forces as Obsidian's graph. On top of that:
+
+| mode | what you see |
+|---|---|
+| Global | every note; wikilinks grey, similarity links orange with the score as opacity |
+| Local | the note you are reading and its neighbourhood, depth 1 to 4, by both edge kinds; double-click any node in another mode to jump here |
+| Semantic map | position is meaning: a t-SNE of the note embeddings, so notes that say the same thing sit together even with no link between them |
+| Clusters | one node per `cluster/X`, sized by members, lines weighted by how many links cross between two clusters; click opens the cluster note |
+| Tags | tag co-occurrence, sized by how many notes carry the tag; click runs an Obsidian search for it |
+
+The filter box takes Obsidian's syntax (`tag:#state/open -path:Views`, `OR`). Colour by vault
+groups, layer, state or age. Hover highlights a node's neighbours and fades the rest. The
+"forces" button exposes repel, link distance and centring. `Archive/` is hidden by default
+(settings); the minimum similarity and neighbour count are settings too.
 
 ## Develop
 

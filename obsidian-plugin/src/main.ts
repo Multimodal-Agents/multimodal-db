@@ -21,7 +21,7 @@ export default class MmdbPlugin extends Plugin {
     this.registerView(RELATED_VIEW, (leaf) => new RelatedView(leaf, this));
     this.registerView(GRAPH_VIEW, (leaf) => new GraphView(leaf, this));
 
-    this.addRibbonIcon("git-fork", "Multimodal DB graph", () => void this.activate(GRAPH_VIEW, "main"));
+    this.addRibbonIcon("radar", "Multimodal DB graph", () => void this.activate(GRAPH_VIEW, "main"));
     this.addCommand({ id: "open-search", name: "Open semantic search", callback: () => void this.activate(SEARCH_VIEW, "right") });
     this.addCommand({ id: "open-related", name: "Open related notes", callback: () => void this.activate(RELATED_VIEW, "right") });
     this.addCommand({ id: "open-graph", name: "Open similarity graph", callback: () => void this.activate(GRAPH_VIEW, "main") });
@@ -68,8 +68,8 @@ export default class MmdbPlugin extends Plugin {
     return adapter instanceof FileSystemAdapter ? adapter.getBasePath() : null;
   }
 
-  async openNote(id: string): Promise<void> {
-    await this.app.workspace.openLinkText(id, "", false);
+  async openNote(id: string, newLeaf = false): Promise<void> {
+    await this.app.workspace.openLinkText(id, "", newLeaf);
   }
 
   async reindex(): Promise<void> {
