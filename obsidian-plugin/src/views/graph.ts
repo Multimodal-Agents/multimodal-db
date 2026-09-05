@@ -700,6 +700,21 @@ export class GraphView extends ItemView {
 
   private wire(): void {
     const canvas = this.canvas;
+    // Node drag must be registered before the zoom behaviour: d3-zoom stops immediate
+    // propagation on mousedown, so whichever listener is first decides drag vs pan.
+    canvas.addEventListener("mousedown", (e) => {
+      if (e.button !== 0) return;
+      const r = canvas.getBoundingClientRect();
+      const n = this.nodeAt(e.clientX - r.left, e.clientY - r.top);
+      if (n) {
+        this.drag = n;
+        this.moved = false;
+        n.fx = n.x;
+        n.fy = n.y;
+        e.stopImmediatePropagation();
+        e.preventDefault();
+      }
+    });
     const z = zoom<HTMLCanvasElement, unknown>()
       .scaleExtent([0.08, 10])
       .filter((e: Event) => !this.drag && (e.type !== "mousedown" || (e as MouseEvent).button === 0))
@@ -730,18 +745,6 @@ export class GraphView extends ItemView {
         canvas.style.cursor = h ? "pointer" : "default";
         canvas.title = h?.note ? h.note.title || h.note.name : h ? `${h.label} (${h.members ?? 0})` : "";
         this.draw();
-      }
-    });
-    canvas.addEventListener("mousedown", (e) => {
-      if (e.button !== 0) return;
-      const r = canvas.getBoundingClientRect();
-      const n = this.nodeAt(e.clientX - r.left, e.clientY - r.top);
-      if (n) {
-        this.drag = n;
-        this.moved = false;
-        n.fx = n.x;
-        n.fy = n.y;
-        e.stopPropagation();
       }
     });
     const release = () => {
