@@ -1,5 +1,6 @@
 import { FileSystemAdapter, Notice, Plugin, WorkspaceLeaf } from "obsidian";
 import { MmdbClient } from "./api";
+import { spawnDetached } from "./launch";
 import { DEFAULT_SETTINGS, MmdbSettings, MmdbSettingTab } from "./settings";
 import { GRAPH_VIEW, GraphView } from "./views/graph";
 import { RELATED_VIEW, RelatedView } from "./views/related";
@@ -27,6 +28,7 @@ export default class MmdbPlugin extends Plugin {
     this.addCommand({ id: "open-graph", name: "Open similarity graph", callback: () => void this.activate(GRAPH_VIEW, "main") });
     this.addCommand({ id: "reindex", name: "Reindex this brain in multimodal-db", callback: () => void this.reindex() });
     this.addCommand({ id: "reconnect", name: "Reconnect to multimodal-db", callback: () => void this.detectBrain() });
+    this.addCommand({ id: "launch-server", name: "Launch multimodal-db server", callback: () => void this.launchServer() });
 
     this.addSettingTab(new MmdbSettingTab(this.app, this));
     this.statusEl = this.addStatusBarItem();
@@ -46,7 +48,7 @@ export default class MmdbPlugin extends Plugin {
   }
 
   /** Which registered brain is this vault? The setting wins; else match the vault path. */
-  async detectBrain(): Promise<void> {
+  async detectBrain(quiet = false): Promise<void> {
     try {
       const health = await this.client.health();
       const mine = this.vaultPath();
@@ -55,12 +57,48 @@ export default class MmdbPlugin extends Plugin {
       if (!match && mine) match = health.brains.find((b) => norm(b.path) === norm(mine));
       this.brain = match?.name ?? null;
       this.statusEl.setText(this.brain ? `mmdb: ${this.brain} (${match!.docs} indexed)` : "mmdb: vault not registered");
-      if (!this.brain) new Notice("multimodal-db: this vault is not a registered brain. Add it under [brains] in mmdb.toml or name it in the plugin settings.");
+      if (!this.brain && !quiet) new Notice("multimodal-db: this vault is not a registered brain. Add it under [brains] in mmdb.toml or name it in the plugin settings.");
     } catch (e) {
       this.brain = null;
       this.statusEl.setText("mmdb: offline");
-      new Notice(`multimodal-db: cannot reach ${this.settings.serverUrl} (${(e as Error).message}). Is \`mmdb serve\` running?`);
+      if (!quiet) new Notice(`multimodal-db: cannot reach ${this.settings.serverUrl} (${(e as Error).message}). Launch the server from the plugin settings or the command palette.`);
     }
+  }
+
+  /** Start the server (detached, its own window) and wait for it to answer. */
+  async launchServer(progress: (msg: string) => void = (m) => new Notice(`multimodal-db: ${m}`)): Promise<void> {
+    const cmd = this.settings.serveCommand.trim();
+    if (!cmd) {
+      progress("no launch command set in the plugin settings");
+      return;
+    }
+    try {
+      await this.client.health();
+      progress("server is already running");
+      await this.detectBrain(true);
+      return;
+    } catch {
+      /* offline: launch it */
+    }
+    try {
+      spawnDetached(cmd);
+    } catch (e) {
+      progress(`launch failed: ${(e as Error).message}`);
+      return;
+    }
+    progress(`launching: ${cmd}`);
+    for (let i = 0; i < 120; i++) {
+      await new Promise((r) => setTimeout(r, 1000));
+      try {
+        await this.client.health();
+        await this.detectBrain(true);
+        progress(`server is up${this.brain ? `, brain ${this.brain}` : ""}`);
+        return;
+      } catch {
+        if (i % 10 === 9) progress(`waiting for the server (${i + 1}s)...`);
+      }
+    }
+    progress("server did not answer within 2 minutes; check its window");
   }
 
   vaultPath(): string | null {

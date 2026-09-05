@@ -3,6 +3,7 @@ import type MmdbPlugin from "./main";
 
 export interface MmdbSettings {
   serverUrl: string;
+  serveCommand: string;
   brain: string;
   similarK: number;
   minScore: number;
@@ -11,6 +12,7 @@ export interface MmdbSettings {
 
 export const DEFAULT_SETTINGS: MmdbSettings = {
   serverUrl: "http://127.0.0.1:8765",
+  serveCommand: "mmdb serve",
   brain: "",
   similarK: 5,
   minScore: 0.8,
@@ -20,6 +22,20 @@ export const DEFAULT_SETTINGS: MmdbSettings = {
 export class MmdbSettingTab extends PluginSettingTab {
   constructor(app: App, private plugin: MmdbPlugin) {
     super(app, plugin);
+  }
+
+  private async refreshStatus(status: Setting): Promise<void> {
+    try {
+      const h = await this.plugin.client.health();
+      await this.plugin.detectBrain(true);
+      const mine = h.brains.find((b) => b.name === this.plugin.brain);
+      status.setDesc(
+        `online, multimodal-db ${h.version}. ` +
+          (mine ? `This vault is brain "${mine.name}" (${mine.docs} notes indexed).` : "This vault is not a registered brain.")
+      );
+    } catch (e) {
+      status.setDesc(`offline at ${this.plugin.settings.serverUrl} (${(e as Error).message}). Launch it here or run it yourself.`);
+    }
   }
 
   display(): void {
@@ -36,6 +52,28 @@ export class MmdbSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         })
       );
+
+    new Setting(containerEl)
+      .setName("Server launch command")
+      .setDesc("What the Launch button runs: a script path (.cmd, .sh) or a command line like `mmdb serve`. Opens in its own window; close that window to stop the server.")
+      .addText((t) =>
+        t.setValue(this.plugin.settings.serveCommand).onChange(async (v) => {
+          this.plugin.settings.serveCommand = v.trim();
+          await this.plugin.saveSettings();
+        })
+      );
+
+    const status = new Setting(containerEl).setName("Server status").setDesc("checking...");
+    status.addButton((b) =>
+      b.setButtonText("Launch server").setCta().onClick(async () => {
+        b.setDisabled(true);
+        await this.plugin.launchServer((msg) => status.setDesc(msg));
+        b.setDisabled(false);
+        await this.refreshStatus(status);
+      })
+    );
+    status.addButton((b) => b.setButtonText("Check").onClick(() => void this.refreshStatus(status)));
+    void this.refreshStatus(status);
 
     new Setting(containerEl)
       .setName("Brain")
