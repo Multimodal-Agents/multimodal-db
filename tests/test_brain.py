@@ -151,6 +151,57 @@ def test_index_search_touch_and_prune(store, embed, tmp_path):
     assert store.vector_count("brain") == before
 
 
+def mini_pdf(text: str) -> bytes:
+    """A one-page PDF with a real xref table, the smallest thing pypdf reads without repair."""
+    stream = f"BT /F1 12 Tf 10 50 Td ({text}) Tj ET".encode()
+    objs = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 100] /Contents 4 0 R "
+        b"/Resources << /Font << /F1 5 0 R >> >> >>",
+        b"<< /Length %d >>\nstream\n" % len(stream) + stream + b"\nendstream",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ]
+    out, offsets = bytearray(b"%PDF-1.4\n"), []
+    for i, body in enumerate(objs, 1):
+        offsets.append(len(out))
+        out += b"%d 0 obj\n" % i + body + b"\nendobj\n"
+    xref = len(out)
+    out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objs) + 1)
+    out += b"".join(b"%010d 00000 n \n" % o for o in offsets)
+    out += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objs) + 1, xref)
+    return bytes(out)
+
+
+def test_index_vault_files(store, embed, tmp_path):
+    v = make_vault(tmp_path)
+    (v / "Reference").mkdir()
+    (v / "Reference" / "paper.pdf").write_bytes(mini_pdf("aotriton paper on gfx1151"))
+    (v / "Reference" / "broken.pdf").write_bytes(b"%PDF-1.4\ngarbage")
+    (v / "Reference" / "notes.tex").write_text("\\section{Timing}\nthe kernel timing argument\n", "utf-8")
+    (v / "Reference" / "shot.png").write_bytes(b"\x89PNG not indexed")
+    (v / "data" / "cache.pdf").write_bytes(mini_pdf("not in a vault folder"))
+    b = Brain.open(v)
+    assert [f.path for f in b.files] == ["Reference/broken.pdf", "Reference/notes.tex", "Reference/paper.pdf"]
+    statuses = {r.document.source_id: r.status for r in b.index(store, embed, collection="brain")}
+    assert statuses["Reference/paper.pdf"] == "added" and statuses["Reference/notes.tex"] == "added"
+    coll = store.collection("brain")
+    pdf = coll.get("Reference/paper.pdf")
+    assert pdf.kind == "file" and pdf.metadata["layer"] == "Reference" and pdf.metadata["file"] is True
+    assert "aotriton paper" in pdf.text and pdf.n_chunks > 0 and "test/reference" in pdf.tags
+    assert "kernel timing" in coll.get("Reference/notes.tex").text
+    # a PDF pypdf cannot parse is stored with no text and does not abort the load
+    assert coll.get("Reference/broken.pdf").text == "" and coll.get("Reference/broken.pdf").n_chunks == 0
+    assert search(store, "brain", "aotriton paper", embed=embed, k=1)[0].source_id == "Reference/paper.pdf"
+
+    # a note-only refresh keeps the files: they are seen, not pruned
+    statuses = {r.document.source_id: r.status for r in Brain.open(v).index(store, embed, collection="brain")}
+    assert statuses["Reference/paper.pdf"] == "unchanged" and coll.count() == 12
+    (v / "Reference" / "notes.tex").unlink()
+    statuses = {r.document.source_id: r.status for r in Brain.open(v).index(store, embed, collection="brain")}
+    assert statuses["Reference/notes.tex"] == "removed" and coll.count() == 11
+
+
 def test_index_layers_only(store, embed, tmp_path):
     b = Brain.open(make_vault(tmp_path))
     results = list(b.index(store, embed, collection="c", layers={"Concepts", "Threads"}))

@@ -23,6 +23,9 @@ DEFAULT_BEGIN = "<!-- sync:begin -->"
 DEFAULT_END = "<!-- sync:end -->"
 DEFAULT_TAIL = "## Thinking"
 SKIP_DIRS = {".obsidian", ".git", ".trash", "data", "tools", "__pycache__", "node_modules"}
+# non-note files a vault may carry that have text worth indexing; images and the like are not
+# copied into the store
+FILE_EXTS = {".pdf", ".tex", ".bib", ".txt", ".rst", ".html", ".htm"}
 KNOWN_LAYERS = {
     "Open": "items", "Archive": "items", "Clusters": "clusters", "Views": "views",
     "Concepts": "concepts", "Threads": "threads", "Reference": "reference", "Hardware": "hardware",
@@ -80,6 +83,17 @@ class Note:
     @property
     def source_id(self) -> str:
         return self.path[:-3] if self.path.endswith(".md") else self.path
+
+
+@dataclass
+class VaultFile:
+    """A PDF, a .tex source, or another text-bearing file living in a vault folder. Its
+    source id keeps the extension, so it can never collide with a note."""
+    path: str
+    layer: str
+    role: str
+    file: Path
+    mtime: datetime
 
 
 def load_spec(root: Path) -> BrainSpec:
@@ -229,11 +243,28 @@ class Brain:
     def _scan(self) -> Iterator[Note]:
         for path in sorted(self.root.rglob("*.md")):
             rel = path.relative_to(self.root)
-            if any(part in SKIP_DIRS or part.startswith(".") for part in rel.parts[:-1]):
-                continue
-            if path.name.startswith("."):
+            if self._skipped(rel):
                 continue
             yield parse_note(self.spec, path, rel)
+
+    def _skipped(self, rel: Path) -> bool:
+        return any(part in SKIP_DIRS or part.startswith(".") for part in rel.parts[:-1]) or rel.name.startswith(".")
+
+    @property
+    def files(self) -> list[VaultFile]:
+        """Non-note files in the vault's folders whose suffix is in ``FILE_EXTS``."""
+        out: list[VaultFile] = []
+        for path in sorted(self.root.rglob("*")):
+            if not path.is_file() or path.suffix.lower() not in FILE_EXTS:
+                continue
+            rel = path.relative_to(self.root)
+            if self._skipped(rel):
+                continue
+            layer = rel.parts[0] if len(rel.parts) > 1 else "(root)"
+            role = self.spec.layers.get(layer, "other") if layer != "(root)" else "root"
+            out.append(VaultFile(path=rel.as_posix(), layer=layer, role=role, file=path,
+                                 mtime=datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc)))
+        return out
 
     @property
     def prefix(self) -> str | None:
@@ -356,7 +387,9 @@ class Brain:
     ) -> Iterator[IngestResult]:
         """Every note into a collection (default ``brain-<slug>``), keyed by its path. The
         hashed bytes are the body without frontmatter, so a sync that only bumps ``synced:``
-        does not re-embed anything; a move between layers is a new key plus a prune."""
+        does not re-embed anything; a move between layers is a new key plus a prune. The
+        vault's PDFs and other ``FILE_EXTS`` files ride along under their full relative
+        path, so a brain's papers are searchable next to its notes."""
         name = collection or f"brain-{self.slug}"
         seen: set[str] = set()
         with Ingester(store, name, embed, identity=identity, chunk_size=chunk_size,
@@ -375,6 +408,13 @@ class Brain:
                 yield ing.ingest_bytes(n.body.encode("utf-8"), source_id=n.source_id, filename=n.path,
                                        kind=n.kind, title=n.title, fetched_at=n.mtime, tags=n.tags,
                                        metadata=meta, text=n.body)
+            for f in self.files:
+                if layers and f.layer not in layers:
+                    continue
+                seen.add(f.path)
+                yield ing.ingest_bytes(f.file.read_bytes(), source_id=f.path, filename=f.path, kind="file",
+                                       fetched_at=f.mtime, tags=[f"{self.prefix}/{f.role}"] if self.prefix else (),
+                                       metadata={"brain": self.name, "layer": f.layer, "role": f.role, "file": True})
             if prune:
                 stale = set(ing.coll.frame()["source_id"].to_list()) - seen
                 if layers:

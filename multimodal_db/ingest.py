@@ -39,6 +39,8 @@ EXTRA_EXT = {
     ".yml": "application/yaml",
     ".jsonl": "application/json",
     ".py": "text/x-python",
+    ".tex": "text/x-tex",
+    ".bib": "text/x-bibtex",
 }
 
 
@@ -120,9 +122,12 @@ def extract_text(data: bytes, mime: str) -> tuple[str, str | None]:
             from pypdf import PdfReader
         except ImportError:
             return "", None
-        reader = PdfReader(io.BytesIO(data))
-        text = "\n\n".join((page.extract_text() or "") for page in reader.pages)
-        title = getattr(reader.metadata, "title", None) if reader.metadata else None
+        try:
+            reader = PdfReader(io.BytesIO(data))
+            text = "\n\n".join((page.extract_text() or "") for page in reader.pages)
+            title = getattr(reader.metadata, "title", None) if reader.metadata else None
+        except Exception:  # a damaged PDF is stored like any other unreadable blob, not fatal
+            return "", None
         return text, (title or None)
     return "", None
 

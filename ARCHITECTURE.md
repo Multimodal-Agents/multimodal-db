@@ -94,7 +94,11 @@ hashed bytes are the body without frontmatter, and layer, role, state, links and
 of the frontmatter (minus the sync's own `synced:` clock) ride in metadata. So a daily sync
 that only rewrites `synced:` costs nothing, a note that gained a tag is `touched`, a note
 that moved from `Open/` to `Archive/` is a new key with the old one pruned, and the vault is
-never written to.
+never written to. Non-note files with a text-bearing suffix (`FILE_EXTS`: pdf, tex, bib, txt,
+rst, html) in a vault folder go into the same collection keyed by their relative path with the
+extension kept, so they cannot collide with a note and a note-only refresh leaves them alone;
+`data/`, `tools/` and dot-folders are skipped the same as for notes. A PDF pypdf cannot parse is
+stored with empty text rather than aborting the load.
 
 Brains are registered by name in `mmdb.toml` (`[brains.amd] path = ...`); a name resolves
 to its vault and its collection, and a bare path resolves to a registered name when one has

@@ -144,9 +144,11 @@ registry is only names to paths.
 Notes are keyed by path and hashed on their body without frontmatter, so a sync that only
 bumps `synced:` re-embeds nothing. Layer, tags, wikilinks, state and the rest of the
 frontmatter ride along as metadata; a note that gained a tag is `touched` (row refreshed,
-vectors kept), one that moved between layers is a new key and the old one is pruned. The
-Python side is `Brain.open(path)` with `.notes`, `.nodes()`, `.edges()`, `.summary()` and
-`.index(store, embed)`.
+vectors kept), one that moved between layers is a new key and the old one is pruned. PDFs,
+`.tex`, `.bib` and other text-bearing files sitting in a vault folder are indexed alongside
+the notes under their full relative path (`Reference/paper.pdf`), so a brain's papers are
+searchable in the same collection. The Python side is `Brain.open(path)` with `.notes`,
+`.files`, `.nodes()`, `.edges()`, `.summary()` and `.index(store, embed)`.
 
 The raw reference pages a brain distils from are too big and too full of chrome to live in
 the vault, so they sit in a cache next to it with a `manifest.json` of ids, URLs, hashes

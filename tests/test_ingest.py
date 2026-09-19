@@ -11,6 +11,7 @@ from multimodal_db.testing import FakeEmbedding
 def test_mime_and_media():
     assert guess_mime("a.md") == "text/markdown" and media_type_for("text/markdown") == "text"
     assert media_type_for("application/pdf") == "document"
+    assert guess_mime("paper.tex") == "text/x-tex" and media_type_for(guess_mime("refs.bib")) == "text"
     assert media_type_for("image/png") == "image" and media_type_for("audio/wav") == "audio"
     assert media_type_for("application/octet-stream") == "document"
 
