@@ -249,7 +249,10 @@ class Ingester:
         digest = hashlib.sha256(data).hexdigest()
         existing = self.coll.get(source_id)
         if existing and existing.content_hash == digest and existing.embedder == self.identity and not force:
-            return self._touch(existing, url=url, kind=kind, title=title, tags=tags, metadata=metadata)
+            result = self._touch(existing, url=url, kind=kind, title=title, tags=tags, metadata=metadata)
+            if self.coll.ledger.head(source_id) is None:
+                self._record("baseline", existing)  # indexed before the ledger existed
+            return result
 
         name = filename or source_id
         mime = guess_mime(name)
@@ -277,8 +280,16 @@ class Ingester:
             self._drop_vectors_for(existing.doc_id)
         doc.n_chunks = self._embed(doc)
         self.coll.upsert(doc)
+        status = "updated" if existing else "added"
+        self._record(status, doc)
         self._maybe_save()
-        return IngestResult("updated" if existing else "added", doc)
+        return IngestResult(status, doc)
+
+    def _record(self, event: str, doc: Document) -> None:
+        header = {"source_id": doc.source_id, "url": doc.url, "kind": doc.kind,
+                  "media_type": doc.media_type, "embedder": doc.embedder}
+        self.coll.ledger.append(doc.source_id, header, {"event": event, "content_hash": doc.content_hash,
+                                                        "size": doc.size})
 
     def _touch(self, existing: Document, *, url: str | None, kind: str | None, title: str | None,
                tags: Iterable[str], metadata: dict[str, Any] | None) -> IngestResult:
@@ -305,6 +316,7 @@ class Ingester:
         if doc is None:
             raise KeyError(f"no document {source_id!r} in {self.coll.name!r}")
         self._drop_vectors_for(doc.doc_id)
+        self._record("removed", doc)
         self._maybe_save()
         return IngestResult("removed", doc)
 
@@ -387,6 +399,7 @@ class Ingester:
             doc.embedder = self.identity
             doc.n_chunks = self._embed(doc)
             self.coll.upsert(doc)
+            self._record("reindexed", doc)
             self._maybe_save()
             yield IngestResult("reindexed", doc)
         self.close()

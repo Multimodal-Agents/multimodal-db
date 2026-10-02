@@ -32,6 +32,7 @@ flowchart LR
 | `providers` | endpoint to LlamaIndex objects, model resolution (`auto`), embedder identity, probes |
 | `store` | `Store`, `Collection`, `Document`: the parquet, the blobs, meta.json, the Qdrant client |
 | `ingest` | bytes to a row plus vectors: mime and media type, text extraction, chunking, dedup, manifests, reindex |
+| `provenance` | the per-collection ledger: canonical-JSON digests, hash chain per `source_id`, verify on open, file fingerprints. Stdlib only |
 | `search` | `search` (embedder only), `ask` (retrieve then answer), `query` (LLM writes one Polars expression) |
 | `brain` | open a vault read-only: notes, ownership regions, wikilink graph, index it |
 | `server` | one process over the store and the registered brains: MCP tools for Claude, JSON routes for the Obsidian plugin, related-notes and similarity graph |

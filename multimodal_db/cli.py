@@ -13,6 +13,7 @@ from . import __version__
 from .brain_cli import brain
 from .config import Config, ConfigError, load_config
 from .ingest import Ingester, IngestResult
+from .provenance import LedgerCorrupt
 from .providers import embedder_identity, embedding_for, llm_for, probe
 from .search import QueryError, ask as _ask, query as _query, search as _search
 from .store import EmbedderMismatch, Store
@@ -45,7 +46,7 @@ def guarded(fn: Callable) -> Callable:
     def wrapper(*args: Any, **kwargs: Any) -> Any:
         try:
             return fn(*args, **kwargs)
-        except (ConfigError, EmbedderMismatch, KeyError, ValueError, RuntimeError) as e:
+        except (ConfigError, EmbedderMismatch, LedgerCorrupt, KeyError, ValueError, RuntimeError) as e:
             msg = e.args[0] if isinstance(e, KeyError) and e.args else str(e)
             raise click.ClickException(msg) from e
 
@@ -396,6 +397,40 @@ def serve(state: State, host: str, port: int, stdio: bool) -> None:
         for entry in state.cfg.brains.values():
             click.echo(f"  brain {entry.name:<12} {entry.path}")
     _serve(state.cfg, host=host, port=port, stdio=stdio)
+
+
+@main.group()
+def provenance() -> None:
+    """The hash-chained ledger of what changed in a collection."""
+
+
+@provenance.command("verify")
+@click.argument("collection")
+@pass_state
+@guarded
+def provenance_verify(state: State, collection: str) -> None:
+    """Recompute every digest; fails naming the first edited line."""
+    n = state.store.collection(collection).ledger.verify()
+    click.echo(f"{collection}: {n} records, all digests match")
+
+
+@provenance.command("history")
+@click.argument("collection")
+@click.argument("source_id")
+@click.option("--json", "as_json", is_flag=True)
+@pass_state
+@guarded
+def provenance_history(state: State, collection: str, source_id: str, as_json: bool) -> None:
+    """Every recorded change to one document, oldest first."""
+    records = state.store.collection(collection).history(source_id)
+    if as_json:
+        click.echo(json.dumps([r.receipt() | {"payload": r.payload} for r in records], indent=2))
+        return
+    if not records:
+        raise click.ClickException(f"no history for {source_id!r} in {collection!r}")
+    click.echo(_table([[r.seq, r.recorded_at, r.payload.get("event", "-"), r.digest[:12],
+                        (r.prev or "-")[:12], str(r.payload.get("content_hash", "-"))[:12]] for r in records],
+                      ["seq", "recorded", "event", "digest", "prev", "content"]))
 
 
 main.add_command(brain)

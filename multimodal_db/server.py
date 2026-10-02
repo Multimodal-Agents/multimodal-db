@@ -136,6 +136,15 @@ class Service:
                 "generated": n.is_generated, "has_thinking": n.has_thinking,
                 "frontmatter": n.frontmatter, "body": n.body, "thinking": n.hand if n.is_generated else n.body}
 
+    def note_history(self, ref: str, note: str) -> list[dict[str, Any]]:
+        entry, b = self.brain(ref)
+        n = b.note(note)
+        sid = n.source_id if n is not None else note
+        if entry.collection not in self.store.collections():
+            raise KeyError(f"brain {entry.name!r} is not indexed yet; load it first")
+        return [r.receipt() | {"content_hash": r.payload.get("content_hash")}
+                for r in self.store.collection(entry.collection).history(sid)]
+
     # ---- retrieval ------------------------------------------------------------------------
 
     def _hit(self, h: Any, layer_of: dict[str, str] | None = None) -> dict[str, Any]:
@@ -310,6 +319,11 @@ def build_server(svc: Service):
     async def read_note(brain: str, note: str) -> dict[str, Any]:
         """One note in full: frontmatter, tags, links, the generated block and the hand-written half."""
         return await svc.run(svc.note, brain, note)
+
+    @server.tool()
+    async def note_history(brain: str, note: str) -> list[dict[str, Any]]:
+        """When a note was added, changed or removed in the index, as a hash chain. Digests only, no content."""
+        return await svc.run(svc.note_history, brain, note)
 
     @server.tool()
     async def search_collection(collection: str, query: str, k: int = 8) -> list[dict[str, Any]]:

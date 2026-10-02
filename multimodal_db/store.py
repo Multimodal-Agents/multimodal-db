@@ -19,6 +19,8 @@ from typing import Any
 
 import polars as pl
 
+from .provenance import Ledger, Record
+
 SCHEMA: dict[str, Any] = {
     "doc_id": pl.String,
     "source_id": pl.String,
@@ -105,6 +107,7 @@ class Collection:
         )
         self._df: pl.DataFrame | None = None
         self.dirty = False
+        self._ledger: Ledger | None = None
 
     @property
     def exists(self) -> bool:
@@ -190,6 +193,16 @@ class Collection:
         self._df = self._load().filter(pl.col("source_id") != source_id)
         self.dirty = True
         return existing
+
+    @property
+    def ledger(self) -> Ledger:
+        """What changed in this collection and when, hash-chained per ``source_id``."""
+        if self._ledger is None:
+            self._ledger = Ledger(self.path / "ledger.jsonl")
+        return self._ledger
+
+    def history(self, source_id: str) -> list[Record]:
+        return self.ledger.history(source_id)
 
     def save(self) -> None:
         if not self.dirty or self._df is None:

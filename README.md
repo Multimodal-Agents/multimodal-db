@@ -110,6 +110,8 @@ needs no source files.
 | `reindex C --embed NAME` | move a collection to another embedder |
 | `rm C SOURCE_ID` | drop one document and its vectors |
 | `drop C [--yes]` | drop a collection |
+| `provenance verify C` | recompute every ledger digest; fails naming the first edited line |
+| `provenance history C SOURCE_ID [--json]` | every add, update, reindex and removal of one document, as a hash chain |
 | `serve [--port 8765 --stdio]` | one long-lived process: MCP for Claude at `/mcp`, JSON for the Obsidian plugin at `/api` |
 | `brain list\|info\|notes\|links\|related\|graph\|load BRAIN` | a registered brain by name, or any vault by path; see below |
 
@@ -180,7 +182,7 @@ claude mcp add --transport http mmdb http://127.0.0.1:8765/mcp
 ```
 
 Claude then has `list_brains`, `search_brain`, `related_notes`, `read_note`, `brain_info`,
-`search_collection`, `ask`, `list_collections` and `load_brain`, and can work any registered
+`search_collection`, `ask`, `list_collections`, `load_brain` and `note_history`, and can work any registered
 brain by name. The same process answers the [Obsidian plugin](obsidian-plugin/) at
 `/api/brains/<name>/{search,related,graph,note}`: semantic search over the open vault, the
 notes nearest to the one you are reading, and a graph with wikilinks and similarity edges
@@ -195,8 +197,16 @@ data/
     documents.parquet     one row per document, extracted text included
     blobs/<hh>/<sha256>.<ext>   the original bytes, content-addressed
     meta.json             embedder identity, chunking, hybrid flag, vector generation
+    ledger.jsonl          append-only provenance, hash-chained per document
   qdrant/                 embedded Qdrant; <name>__g<N>, a new generation per reindex
 ```
+
+Every add, update, reindex and removal appends one record to `ledger.jsonl`: where the
+document came from, its content hash and the digest of its previous record, SHA-256 over
+canonical JSON. Opening the ledger recomputes every digest, so a hand-edited line fails
+loudly instead of being trusted. No text is stored in it. `fingerprint()` and `changed()`
+are the same idea for files a renderer writes: keep the fingerprint, and a mismatch later
+is a hand edit to pull back.
 
 The parquet is rewritten whole on save, which is fine into the tens of thousands of
 documents. [ARCHITECTURE.md](ARCHITECTURE.md) has the data model and the reasons.
